@@ -255,8 +255,18 @@ let label graph =
       Printf.sprintf "%s (%s)" name location
     else name
 
-let output ?(threshold = 1.0) oc graph =
-  Printf.fprintf oc "Call graph%s:\n-----------%s\n%!" (if graph.label = "" then "" else " '"^graph.label^"'") (if graph.label = "" then "" else String.make ((String.length graph.label) + 3) '-');
+let output ?(threshold = 1.0) ~tkind oc graph =
+  if threshold > 0.0 then
+    Printf.fprintf oc "Note: Nodes accounting for less than %2.2f%% of their parent have been ignored.\n\n%!" threshold;
+  begin match tkind with
+    | `Ascii ->
+      Printf.fprintf oc "Call graph%s:\n-----------%s\n%!"
+        (if graph.label = "" then "" else " '"^graph.label^"'") (if graph.label = "" then "" else String.make ((String.length graph.label) + 3) '-');
+    | `Org ->
+      Printf.fprintf oc "* Call graph%s:\n%!"
+        (if graph.label = "" then "" else " '"^graph.label^"'");
+
+  end;
   let label = label graph in
   let color = color graph in
   let human x =
@@ -284,26 +294,42 @@ let output ?(threshold = 1.0) oc graph =
     | [] -> true
     | father:: _ ->
       let depth = List.length ancestors in
-      let spaces = spaces depth in
       let this_time, father_time = node.time, father.time in
       if node.calls > 0 then
         if father_time > 0.0 then
           let percent = 100.0 *. this_time /. father_time in
           let this_time, unit = human this_time in
           if percent >= threshold then begin
-            Printf.fprintf oc "%s\n%!"
-              (Printf.sprintf
-                 "[ %7.2f%1s cycles in %*d calls ] %s %5.2f%% : %s"
-                 this_time unit digits_of_call node.calls spaces percent (color node (label node)));
+            begin match tkind with
+            | `Ascii ->
+              Printf.fprintf oc "%s %s %5.2f%% : %s\n%!"
+                (Printf.sprintf "[ %7.2f%1s cycles in %*d calls ]"
+                   this_time unit digits_of_call node.calls)
+                (spaces depth) percent (color node (label node));
+            | `Org ->
+              let stars = String.make (depth+1) '*' in
+              Printf.fprintf oc "%s %5.2f%% : %s (%s)\n%!"
+                stars percent (color node (label node))
+                (Printf.sprintf "%.2f%1s cycles in %d calls"
+                   this_time unit node.calls)
+            end;
             true
           end else
             false
         else
           let this_time, unit = human this_time in
-          Printf.fprintf oc "%s\n%!"
-            (Printf.sprintf
-               "[ %7.2f%1s  cycles in %7d calls ] %s * %s"
-               this_time unit node.calls spaces (color node (label node)));
+          begin match tkind with
+            | `Ascii ->
+              Printf.fprintf oc "%s %s * %s"
+                (Printf.sprintf "[ %7.2f%1s  cycles in %7d calls ]"
+                   this_time unit node.calls)
+                (spaces depth) (color node (label node))
+            | `Org ->
+              Printf.fprintf oc "%s * %s (%s)\n"
+                (String.make (depth+1) '*') (color node (label node))
+                (Printf.sprintf "%.2f%1s cycles in %d calls"
+                   this_time unit node.calls)
+          end;
           false
        else
          false
@@ -324,31 +350,43 @@ let output ?(threshold = 1.0) oc graph =
   let sample_nodes = List.filter (fun n -> n.kind = Sampler) all_nodes in
   let profile_with_sys_time = List.exists (fun {sys_time; _} -> sys_time <> 0.0) normal_nodes in
   let profile_with_allocated_bytes = List.exists (fun {allocated_bytes; _} -> allocated_bytes <> 0.0) normal_nodes in
-  let optional_headers =
+  let optional_headers, optional_headers_delim =
     match profile_with_sys_time, profile_with_allocated_bytes with
-    | true, true -> Printf.sprintf "; %8s; %8s" "Sys time" "Allocated bytes"
-    | true, false -> Printf.sprintf "; %8s" "Sys time"
-    | false, true -> Printf.sprintf "; %8s" "Allocated bytes"
-    | false, false -> ""
+    | true, true ->
+      Printf.sprintf " | %8s | %8s" "Sys time" "Allocated bytes",
+      Printf.sprintf "-+-%s-+-%s-" (String.make 8 '-') (String.make 8 '-')
+    | true, false ->
+      Printf.sprintf " | %8s" "Sys time",
+      Printf.sprintf "-+-%s" (String.make 8 '-')
+    | false, true ->
+      Printf.sprintf " | %8s" "Allocated bytes",
+      Printf.sprintf "-+-%s" (String.make 8 '-')
+    | false, false -> "", ""
   in
   let optional_columns sys_time allocated_bytes =
     match profile_with_sys_time, profile_with_allocated_bytes with
-    | true, true -> Printf.sprintf "; %8.3f; %8.0f" sys_time allocated_bytes
-    | true, false -> Printf.sprintf "; %8.3f" sys_time
-    | false, true -> Printf.sprintf "; %8.0f" allocated_bytes
+    | true, true -> Printf.sprintf " | %8.3f | %8.0f" sys_time allocated_bytes
+    | true, false -> Printf.sprintf " | %8.3f" sys_time
+    | false, true -> Printf.sprintf " | %8.0f" allocated_bytes
     | false, false -> ""
   in
-  if threshold > 0.0 then
-    Printf.fprintf oc "\nNote: Nodes accounting for less than %2.2f%% of their parent have been ignored.\n%!" threshold;
-  Printf.fprintf oc "\nAggregated table:\n----------------\n%!";
+  begin match tkind with
+    | `Ascii ->
+      Printf.fprintf oc "\nAggregated table:\n----------------\n%!";
+    | `Org ->
+      Printf.fprintf oc "\n\n* Aggregated table:\n\n";
+  end;
   let max_name_length = List.fold_left (fun acc {name; _} -> max acc (String.length name)) 0 normal_nodes in
   let max_location_length = List.fold_left (fun acc {location; _} -> max acc (String.length location)) 0 normal_nodes in
-  Printf.fprintf oc "%*s; %*s; %8s; %8s%s\n%!"
+  Printf.fprintf oc "| %*s | %*s | %8s | %8s%s |\n%!"
     max_name_length "Name" max_location_length "Filename" "Calls" "Time" optional_headers;
+  Printf.fprintf oc "|-%s-+-%s-+-%s-+-%s%s-|\n%!"
+    (String.make max_name_length '-') (String.make max_location_length '-')
+    (String.make 8 '-') (String.make 8 '-') optional_headers_delim;
   let print_row ({name; location; calls;
                   time; allocated_bytes; sys_time; _}) =
     let time, unit = human time in
-    Printf.fprintf oc "%*s; %*s; %8d; %7.2f%1s%s\n%!"
+    Printf.fprintf oc "| %*s | %*s | %8d | %7.2f%1s%s |\n%!"
       max_name_length name max_location_length location calls time unit (optional_columns sys_time allocated_bytes)
   in
   List.iter print_row normal_nodes;

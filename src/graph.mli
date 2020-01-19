@@ -100,7 +100,7 @@ val aggregate_landmarks: graph -> graph
 
 (** {3 Output } *)
 
-val output: ?threshold:float -> out_channel -> graph -> unit
+val output: ?threshold:float -> tkind:[`Ascii | `Org] -> out_channel -> graph -> unit
 (** Pretty printed output a call graph on an out_channel. *)
 
 val output_json: out_channel -> graph -> unit

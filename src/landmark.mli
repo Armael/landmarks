@@ -82,7 +82,7 @@ type profile_output =
   | Channel of out_channel (** writes in the results in out_channel. *)
 
 
-type textual_option = {threshold : float}
+type textual_option = {threshold : float; tkind : [`Ascii | `Org]}
 
 (** The output format for the results.*)
 type profile_format =

@@ -199,7 +199,7 @@ type profile_output =
   | Temporary of string option
   | Channel of out_channel
 
-type textual_option = {threshold : float}
+type textual_option = {threshold : float; tkind : [`Ascii | `Org] }
 
 type profile_format =
   | JSON
@@ -210,7 +210,7 @@ let profile_with_debug = ref false
 let profile_with_allocated_bytes = ref false
 let profile_with_sys_time = ref false
 let profile_output = ref Silent
-let profile_format = ref (Textual {threshold = 1.0})
+let profile_format = ref (Textual {threshold = 1.0; tkind = `Ascii})
 let profile_recursive = ref false
 
 let profiling () = !profiling_ref
@@ -595,7 +595,7 @@ let default_options = {
   sys_time = false;
   recursive = false;
   output = Channel stderr;
-  format = Textual {threshold = 1.0};
+  format = Textual {threshold = 1.0; tkind = `Ascii};
 }
 
 let set_profiling_options {debug; allocated_bytes; sys_time; output; format; recursive} =
@@ -735,8 +735,8 @@ let exit_hook () =
     let cg = export ~label () in
     match !profile_output, !profile_format with
     | Silent, _ -> ()
-    | Channel out, Textual {threshold} ->
-      Graph.output ~threshold out cg
+    | Channel out, Textual {threshold; tkind} ->
+      Graph.output ~threshold ~tkind out cg
     | Channel out, JSON ->
       Graph.output_json out cg
     | Temporary temp_dir, format ->
@@ -747,7 +747,7 @@ let exit_hook () =
         "[Profiling] Dumping profiling information in file '%s'.\n" tmp_file;
       flush stdout;
       (match format with
-      | Textual {threshold} -> Graph.output ~threshold oc cg
+      | Textual {threshold; tkind} -> Graph.output ~threshold ~tkind oc cg
       | JSON -> Graph.output_json oc cg);
       close_out oc
   end
@@ -758,7 +758,7 @@ let () = Pervasives.at_exit exit_hook
 let parse_env_options s =
   let open Printf in
   let debug = ref false in
-  let format = ref (Textual {threshold = 1.0}) in
+  let format = ref (Textual {threshold = 1.0; tkind = `Ascii}) in
   let output = ref (Channel stderr) in
   let sys_time = ref false in
   let recursive = ref false in
@@ -783,20 +783,34 @@ let parse_env_options s =
     | "debug" :: _  -> expect_no_argument "debug"
     | [ "threshold" ; percent ] ->
       begin match !format with
-      | Textual _ ->
+      | Textual { threshold = _; tkind } ->
          let threshold = try Some (float_of_string percent) with _ -> None in
          begin match threshold with
          | None ->
            warning (Printf.sprintf "Unable to parse threshold '%s'" percent)
          | Some threshold ->
-           format := Textual {threshold}
+           format := Textual {threshold; tkind}
          end
       | _ -> warning (Printf.sprintf "The option threshold only makes sense with the 'textual' format.")
       end
+    | [ "textual-kind" ; ("ascii" | "org" as tkind) ] ->
+      begin match !format with
+        | Textual { threshold ; tkind = _ } ->
+          let tkind =
+            match tkind with
+            | "ascii" -> `Ascii
+            | "org" -> `Org
+            | _ -> assert false
+          in
+          format := Textual { threshold; tkind }
+        | _ -> warning (Printf.sprintf "The option textual-kind only makes sense with the 'textual' format.")
+      end
+    | [ "textual-kind" ; unknown ] ->
+        invalid_for "textual-kind" unknown
     | [ "format"; "textual" ] ->
       begin match !format with
       | Textual _ -> ()
-      | _ -> format := Textual {threshold = 1.0};
+      | _ -> format := Textual {threshold = 1.0; tkind = `Ascii };
       end
     | [ "format"; "json" ] -> format := JSON;
     | [ "format"; unknown ] -> invalid_for "format" unknown
